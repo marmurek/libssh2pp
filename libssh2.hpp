@@ -46,6 +46,7 @@ extern "C"
 #include <iostream>
 #include <atomic>
 #include <iomanip>
+#include <memory>
 
 namespace libssh2
 {
@@ -131,16 +132,43 @@ namespace libssh2
                 throw e;
             }
         }
+        
+        std::string execute(const char *command)
+        {
+            std::stringstream s;
+
+            if( auto err = libssh2_channel_exec(this->_chan, command))
+            {
+                s << "libssh2_channel_exec() error, code: " << err;
+                exception e(s.str());
+                throw e;
+            }
+
+            ssize_t nbytes = 0;
+            do
+            {
+                char buffer[1024];
+                nbytes = libssh2_channel_read(this->_chan, buffer, sizeof(buffer));
+                if (nbytes > 0)
+                {
+                    s.write(buffer, nbytes);
+                }
+            } while (nbytes > 0);
+
+            return s.str();
+        }
         ~channel()
         {
+            libssh2_channel_send_eof(this->_chan);
+            libssh2_channel_wait_closed(this->_chan);
             libssh2_channel_free(this->_chan);
         }
-    private:
         channel(LIBSSH2_CHANNEL* c)
         {
             this->_chan = c;
         }
         
+    private:
         LIBSSH2_CHANNEL* _chan;
     };
     
@@ -304,7 +332,7 @@ namespace libssh2
         {
             return fingerprint(this->_sess);
         }
-        void auth_password(std::string username, std::string password) throw(authentication_exception)
+        void auth_password(std::string username, std::string password)
         {
             // TODO Check the return value for the specific error.
             if(libssh2_userauth_password(this->_sess, username.c_str(), password.c_str()))
@@ -313,7 +341,7 @@ namespace libssh2
                 throw e;
             }
         }
-        channel* open_channel()
+        std::unique_ptr<channel> open_channel()
         {
             LIBSSH2_CHANNEL* _chan;
             // TODO Check the return value for the specific error.
@@ -322,8 +350,8 @@ namespace libssh2
                 exception e("Could not open channel");
                 throw e;
             }
-            channel* c = new channel(_chan);
-            return c;
+
+            return std::make_unique<channel>(_chan);
         }
         virtual ~session()
         {
